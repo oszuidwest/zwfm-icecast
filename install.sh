@@ -12,7 +12,7 @@ if ! curl -sLo "${FUNCTIONS_LIB_PATH}" "${FUNCTIONS_LIB_URL}"; then
 fi
 
 # Source the functions library
-# shellcheck source=/tmp/functions.sh
+# shellcheck source=/tmp/functions.sh disable=SC1091
 source "${FUNCTIONS_LIB_PATH}"
 
 # Define constants
