@@ -147,28 +147,14 @@ cat << EOF > "$ICECAST_XML"
 </icecast>
 EOF
 
-# Create robots.txt to prevent bots from accessing audio streams
-echo -e "${BLUE}►► Creating robots.txt to block bots from audio streams...${NC}"
+# Create robots.txt to prevent bots from accessing the server
+echo -e "${BLUE}►► Creating robots.txt to block bots...${NC}"
 cat << 'ROBOTS_EOF' > "${ICECAST_WEBROOT}/robots.txt"
 # Robots.txt for Icecast streaming server
-# Prevents bots from consuming bandwidth by accessing audio streams
-# while allowing them to index server status pages
+# Prevents bots from consuming bandwidth and indexing
 
 User-agent: *
-Crawl-delay: 10
-Disallow: /*.mp3
-Disallow: /*.m3u
-Disallow: /*.m3u8
-Disallow: /*.ogg
-Disallow: /*.opus
-Disallow: /*.aac
-Disallow: /*.flac
-Disallow: /*.xspf
-Disallow: /*.pls
-Disallow: /*.stl
-Allow: /status.xsl
-Allow: /status.json
-Allow: /
+Disallow: /
 ROBOTS_EOF
 
 # Set proper permissions for robots.txt
