@@ -62,6 +62,12 @@ The installer configures Icecast with:
 - **CORS**: Enabled via `Access-Control-Allow-Origin: *` header
 - **Search engine blocking**: Fully blocked via both `X-Robots-Tag: noindex, noarchive` HTTP header and `robots.txt`
 - **Timezone**: Europe/Amsterdam
+- **Logging**:
+  - **Log rotation**: 64 MB per file (rotates when limit is reached)
+  - **Log archival**: Date-stamped archived files when rotated (e.g., `error.log.2025-11-03T15-30-45`)
+  - **Log retention**: All archived logs kept indefinitely
+  - **Log level**: Error only (minimal verbosity for production)
+  - **Log location**: `/var/log/icecast2/` (error.log and access.log)
 
 # Connecting Stream Sources
 Icecast accepts streams from any encoder that supports the Icecast protocol. Configure your broadcasting software with:

@@ -141,8 +141,9 @@ cat << EOF > "$ICECAST_XML"
   </paths>
 
   <logging>
-    <logsize>0</logsize>
-    <loglevel>2</loglevel>
+    <loglevel>1</loglevel>
+    <logsize>65536</logsize>
+    <logarchive>1</logarchive>
   </logging>
 </icecast>
 EOF
