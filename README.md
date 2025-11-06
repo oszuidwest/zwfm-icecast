@@ -10,11 +10,12 @@ Pairs perfectly with [zwfm-liquidsoap](https://github.com/oszuidwest/zwfm-liquid
 # Features
 - Fully automated installation and service setup
 - SSL/TLS via Let's Encrypt with auto-renewal
-- Multiple hostname support
+- Multiple hostname support with DNS validation
 - Bot protection (robots.txt, indexing headers)
 - Privileged port binding without root
 - Production defaults: 5000 clients, 25 sources
 - Automatic log rotation (64 MB) with date-stamped archives
+- Configuration validation (XML syntax checking)
 
 # Installation
 
@@ -24,7 +25,9 @@ Debian/Ubuntu 64-bit system required. Run as root:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/oszuidwest/zwfm-icecast/main/install.sh)"
 ```
 
-Prompts for: hostname(s), passwords, location, admin email, port, SSL, OS updates.
+Prompts for: hostname(s), passwords, location, admin email, port, timezone, SSL, OS updates.
+
+The installer validates DNS resolution for all hostnames and warns if they don't resolve (important for Let's Encrypt).
 
 # Multiple Hostnames
 
@@ -55,7 +58,7 @@ Status: `http://your-hostname:port/status.xsl`
 | Burst size | 265536 bytes |
 | CORS | Enabled |
 | Search engines | Blocked (robots.txt + headers) |
-| Timezone | Europe/Amsterdam |
+| Timezone | Configurable (default: Europe/Amsterdam) |
 | Log rotation | 64 MB per file |
 | Log archival | Date-stamped, indefinite retention |
 | Log level | Error only |
