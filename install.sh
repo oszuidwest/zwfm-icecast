@@ -21,14 +21,12 @@ ICECAST_XML="${ICECAST_CONFIG_DIR}/icecast.xml"
 ICECAST_WEBROOT="/usr/share/icecast2/web"
 ICECAST_PEM_PATH="/usr/share/icecast2/icecast.pem"
 LETSENCRYPT_HOOKS_DIR="/etc/letsencrypt/renewal-hooks/deploy"
-TIMEZONE="Europe/Amsterdam"
 
 # Environment setup
 set_colors
 check_user_privileges privileged
 is_this_linux
 is_this_os_64bit
-set_timezone "${TIMEZONE}"
 
 # Display a welcome banner
 clear
@@ -58,6 +56,7 @@ if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
 fi
 
 ask_user "SSL" "n" "Do you want Let's Encrypt to get a certificate for this server? (y/n)" "y/n"
+ask_user "TIMEZONE" "Europe/Amsterdam" "What timezone should the server use? (e.g., Europe/Amsterdam, America/New_York)" "str"
 ask_user "DO_UPDATES" "y" "Would you like to perform all OS updates? (y/n)" "y/n"
 
 # Sanitize and validate the entered hostname(s)
@@ -78,11 +77,29 @@ done
 HOSTNAMES_ARRAY=("${sanitized_domains[@]}")
 PRIMARY_HOSTNAME="${HOSTNAMES_ARRAY[0]}"
 
+# Validate DNS resolution for hostnames
+echo -e "${BLUE}►► Validating DNS resolution...${NC}"
+for domain in "${HOSTNAMES_ARRAY[@]}"; do
+  if ! getent hosts "$domain" >/dev/null 2>&1; then
+    echo -e "${YELLOW}Warning: Hostname '$domain' does not resolve to an IP address.${NC}"
+    echo -e "${YELLOW}This may cause issues, especially with Let's Encrypt SSL certificate acquisition.${NC}"
+    ask_user "CONTINUE_ANYWAY" "n" "Do you want to continue anyway? (y/n)" "y/n"
+    if [ "$CONTINUE_ANYWAY" != "y" ]; then
+      echo -e "${RED}Installation aborted by user.${NC}"
+      exit 1
+    fi
+    break
+  fi
+done
+
 # Build the domain flags for Certbot as an array
 DOMAINS_FLAGS=()
 for domain in "${HOSTNAMES_ARRAY[@]}"; do
   DOMAINS_FLAGS+=(-d "$domain")
 done
+
+# Set the system timezone
+set_timezone "${TIMEZONE}"
 
 # Update the OS if requested
 if [ "${DO_UPDATES}" == "y" ]; then
@@ -91,9 +108,9 @@ fi
 
 # Install necessary packages
 if [ "$SSL" = "y" ] && [ "$PORT" = "80" ]; then
-  install_packages silent icecast2 certbot
+  install_packages silent icecast2 certbot libxml2-utils
 else
-  install_packages silent icecast2
+  install_packages silent icecast2 libxml2-utils
 fi
 
 # Backup existing configuration if it exists
@@ -147,6 +164,13 @@ cat << EOF > "$ICECAST_XML"
   </logging>
 </icecast>
 EOF
+
+# Validate the generated XML
+echo -e "${BLUE}►► Validating Icecast configuration...${NC}"
+if ! xmllint --noout "$ICECAST_XML" 2>&1; then
+  echo -e "${RED}Error: Generated icecast.xml is not valid XML. This is a bug in the installer.${NC}"
+  exit 1
+fi
 
 # Create robots.txt to prevent bots from accessing the server
 echo -e "${BLUE}►► Creating robots.txt to block bots...${NC}"
@@ -222,6 +246,13 @@ HOOK_EOF
         <port>443</port>\n\
         <ssl>1</ssl>\n\
     </listen-socket>" "$ICECAST_XML"
+
+      # Validate the modified XML
+      echo -e "${BLUE}►► Validating SSL configuration...${NC}"
+      if ! xmllint --noout "$ICECAST_XML" 2>&1; then
+        echo -e "${RED}Error: icecast.xml became invalid after adding SSL configuration.${NC}"
+        exit 1
+      fi
 
       # Restart Icecast to apply the new configuration
       echo -e "${BLUE}►► Restarting Icecast with SSL support${NC}"
