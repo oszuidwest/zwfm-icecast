@@ -213,17 +213,20 @@ if [ "$SSL" = "y" ] && [ "$PORT" = "80" ]; then
   mkdir -p "${LETSENCRYPT_HOOKS_DIR}"
   cat << HOOK_EOF > "$DEPLOY_HOOK_SCRIPT"
 #!/bin/bash
+set -euo pipefail
+
 CERT_PATH="/etc/letsencrypt/live/${PRIMARY_HOSTNAME}"
 ICECAST_PEM="${ICECAST_PEM_PATH}"
 
-# Concatenate certificate and key
-cat "\$CERT_PATH/fullchain.pem" "\$CERT_PATH/privkey.pem" > "\$ICECAST_PEM"
+# Atomic write via temp file
+TEMP_PEM=\$(mktemp)
+trap 'rm -f "\$TEMP_PEM"' EXIT
 
-# Set proper permissions
-chown icecast2:icecast "\$ICECAST_PEM"
-chmod 600 "\$ICECAST_PEM"
+cat "\$CERT_PATH/fullchain.pem" "\$CERT_PATH/privkey.pem" > "\$TEMP_PEM"
+chown icecast2:icecast "\$TEMP_PEM"
+chmod 600 "\$TEMP_PEM"
+mv "\$TEMP_PEM" "\$ICECAST_PEM"
 
-# Restart Icecast
 systemctl restart icecast2
 HOOK_EOF
   chmod +x "$DEPLOY_HOOK_SCRIPT"
@@ -235,8 +238,13 @@ HOOK_EOF
 
   # Check if Certbot successfully obtained a certificate and create the PEM file
   if [ -d "/etc/letsencrypt/live/$PRIMARY_HOSTNAME" ]; then
-    # Run the deploy hook manually for the first time
-    bash "$DEPLOY_HOOK_SCRIPT"
+    # Create combined PEM file for Icecast (first time setup)
+    TEMP_PEM=$(mktemp)
+    cat "/etc/letsencrypt/live/${PRIMARY_HOSTNAME}/fullchain.pem" \
+        "/etc/letsencrypt/live/${PRIMARY_HOSTNAME}/privkey.pem" > "$TEMP_PEM"
+    chown icecast2:icecast "$TEMP_PEM"
+    chmod 600 "$TEMP_PEM"
+    mv "$TEMP_PEM" "${ICECAST_PEM_PATH}"
 
     if [ -f "${ICECAST_PEM_PATH}" ]; then
       # Update icecast.xml with SSL settings
