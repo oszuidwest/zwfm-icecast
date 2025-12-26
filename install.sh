@@ -213,7 +213,7 @@ if [ "$SSL" = "y" ] && [ "$PORT" = "80" ]; then
   mkdir -p "${LETSENCRYPT_HOOKS_DIR}"
   cat << HOOK_EOF > "$DEPLOY_HOOK_SCRIPT"
 #!/bin/bash
-CERT_PATH="/etc/letsencrypt/live/\$RENEWED_DOMAINS"
+CERT_PATH="/etc/letsencrypt/live/${PRIMARY_HOSTNAME}"
 ICECAST_PEM="${ICECAST_PEM_PATH}"
 
 # Concatenate certificate and key
@@ -236,7 +236,7 @@ HOOK_EOF
   # Check if Certbot successfully obtained a certificate and create the PEM file
   if [ -d "/etc/letsencrypt/live/$PRIMARY_HOSTNAME" ]; then
     # Run the deploy hook manually for the first time
-    RENEWED_DOMAINS="$PRIMARY_HOSTNAME" bash "$DEPLOY_HOOK_SCRIPT"
+    bash "$DEPLOY_HOOK_SCRIPT"
 
     if [ -f "${ICECAST_PEM_PATH}" ]; then
       # Update icecast.xml with SSL settings
