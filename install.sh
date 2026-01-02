@@ -68,7 +68,7 @@ sanitized_domains=()
 for domain in "${HOSTNAMES_ARRAY[@]}"; do
   sanitized_domain=$(echo "$domain" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
   # Validate hostname using library function
-  if ! is_valid "$sanitized_domain" "" "host"; then
+  if ! is_valid "$sanitized_domain" "host" "HOSTNAME"; then
     echo -e "${RED}Error: Invalid hostname format: $domain${NC}"
     exit 1
   fi
