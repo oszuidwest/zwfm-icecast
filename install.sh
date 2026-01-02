@@ -2,7 +2,7 @@
 
 # Load the functions library
 FUNCTIONS_LIB_PATH=$(mktemp)
-FUNCTIONS_LIB_URL="https://raw.githubusercontent.com/oszuidwest/bash-functions/main/common-functions.sh"
+FUNCTIONS_LIB_URL="https://raw.githubusercontent.com/oszuidwest/bash-functions/v2/common-functions.sh"
 
 # Clean up temporary file on exit
 trap 'rm -f "${FUNCTIONS_LIB_PATH}"' EXIT
@@ -26,9 +26,9 @@ LETSENCRYPT_HOOKS_DIR="/etc/letsencrypt/renewal-hooks/deploy"
 
 # Environment setup
 set_colors
-check_user_privileges privileged
-is_this_linux
-is_this_os_64bit
+assert_user_privileged "root"
+assert_os_linux
+assert_os_64bit
 
 # Display a welcome banner
 clear
@@ -44,12 +44,12 @@ EOF
 echo -e "${GREEN}⎎ Icecast 2 Installation and Configuration${NC}\n"
 
 # Prompt user for input
-ask_user "HOSTNAMES" "localhost" "Specify the host name(s) (e.g., icecast.example.com) separated by a space (enter without http:// or www) please" "str"
-ask_user "SOURCEPASS" "hackme" "Specify the source and relay password" "str"
-ask_user "ADMINPASS" "hackme" "Specify the admin password" "str"
-ask_user "LOCATED" "Earth" "Where is this server located (visible on admin pages)?" "str"
-ask_user "ADMINMAIL" "root@localhost.local" "What's the admin's e-mail (visible on admin pages and for Let's Encrypt)?" "email"
-ask_user "PORT" "80" "Specify the port" "num"
+prompt_user "HOSTNAMES" "localhost" "Hostname(s) separated by space (without http:// or www)" "str"
+prompt_user "SOURCEPASS" "hackme" "Source and relay password" "str"
+prompt_user "ADMINPASS" "hackme" "Admin password" "str"
+prompt_user "LOCATED" "Earth" "Server location (visible on admin pages)" "str"
+prompt_user "ADMINMAIL" "root@localhost" "Admin email (for Let's Encrypt)" "email"
+prompt_user "PORT" "80" "Port number (1-65535)" "num"
 
 # Validate port number
 if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
@@ -57,9 +57,9 @@ if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
   exit 1
 fi
 
-ask_user "SSL" "n" "Do you want Let's Encrypt to get a certificate for this server? (y/n)" "y/n"
-ask_user "TIMEZONE" "Europe/Amsterdam" "What timezone should the server use? (e.g., Europe/Amsterdam, America/New_York)" "str"
-ask_user "DO_UPDATES" "y" "Would you like to perform all OS updates? (y/n)" "y/n"
+prompt_user "SSL" "n" "Enable Let's Encrypt SSL? (y/n)" "y/n"
+prompt_user "TIMEZONE" "Europe/Amsterdam" "Server timezone" "str"
+prompt_user "DO_UPDATES" "y" "Perform OS updates? (y/n)" "y/n"
 
 # Sanitize and validate the entered hostname(s)
 HOSTNAMES=$(echo "$HOSTNAMES" | xargs)
@@ -67,8 +67,8 @@ IFS=' ' read -r -a HOSTNAMES_ARRAY <<< "$HOSTNAMES"
 sanitized_domains=()
 for domain in "${HOSTNAMES_ARRAY[@]}"; do
   sanitized_domain=$(echo "$domain" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-  # Basic hostname validation
-  if [[ ! "$sanitized_domain" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$ ]]; then
+  # Validate hostname using library function
+  if ! is_valid "$sanitized_domain" "host" "HOSTNAME"; then
     echo -e "${RED}Error: Invalid hostname format: $domain${NC}"
     exit 1
   fi
@@ -85,7 +85,7 @@ for domain in "${HOSTNAMES_ARRAY[@]}"; do
   if ! getent hosts "$domain" >/dev/null 2>&1; then
     echo -e "${YELLOW}Warning: Hostname '$domain' does not resolve to an IP address.${NC}"
     echo -e "${YELLOW}This may cause issues, especially with Let's Encrypt SSL certificate acquisition.${NC}"
-    ask_user "CONTINUE_ANYWAY" "n" "Do you want to continue anyway? (y/n)" "y/n"
+    prompt_user "CONTINUE_ANYWAY" "n" "Continue anyway? (y/n)" "y/n"
     if [ "$CONTINUE_ANYWAY" != "y" ]; then
       echo -e "${RED}Installation aborted by user.${NC}"
       exit 1
@@ -105,20 +105,24 @@ set_timezone "${TIMEZONE}"
 
 # Update the OS if requested
 if [ "${DO_UPDATES}" == "y" ]; then
-  update_os silent
+  apt_update --silent
 fi
 
 # Install necessary packages
 if [ "$SSL" = "y" ] && [ "$PORT" = "80" ]; then
-  install_packages silent icecast2 certbot libxml2-utils
+  apt_install --silent icecast2 certbot libxml2-utils
 else
-  install_packages silent icecast2 libxml2-utils
+  apt_install --silent icecast2 libxml2-utils
 fi
 
 # Backup existing configuration if it exists
 if [ -f "$ICECAST_XML" ]; then
-  backup_file "$ICECAST_XML"
-  echo -e "${BLUE}►► Backed up existing Icecast configuration${NC}"
+  file_backup "$ICECAST_XML"
+  case $? in
+    0) echo -e "${GREEN}✓ Backed up existing Icecast configuration${NC}" ;;
+    1) echo -e "${RED}Failed to backup configuration${NC}"; exit 1 ;;
+    2) ;; # File didn't exist, which is fine
+  esac
 fi
 
 # Generate the initial icecast.xml configuration
@@ -231,42 +235,57 @@ systemctl restart icecast2
 HOOK_EOF
   chmod +x "$DEPLOY_HOOK_SCRIPT"
 
-  certbot --text --agree-tos --email "$ADMINMAIL" --noninteractive --no-eff-email \
+  if ! certbot --text --agree-tos --email "$ADMINMAIL" --noninteractive --no-eff-email \
     --webroot --webroot-path="${ICECAST_WEBROOT}" \
     "${DOMAINS_FLAGS[@]}" \
-    certonly
-
+    certonly; then
+    echo -e "${RED}Certbot failed to obtain certificate${NC}"
+    echo -e "${YELLOW}Common causes:${NC}"
+    echo -e "  - DNS not pointing to this server"
+    echo -e "  - Port 80 blocked by firewall"
+    echo -e "  - Rate limit exceeded"
+    echo -e "${YELLOW}Icecast will continue running on port ${PORT} without SSL${NC}"
   # Check if Certbot successfully obtained a certificate and create the PEM file
-  if [ -d "/etc/letsencrypt/live/$PRIMARY_HOSTNAME" ]; then
+  elif [ -d "/etc/letsencrypt/live/$PRIMARY_HOSTNAME" ]; then
     # Create combined PEM file for Icecast (first time setup)
     TEMP_PEM=$(mktemp)
-    cat "/etc/letsencrypt/live/${PRIMARY_HOSTNAME}/fullchain.pem" \
-        "/etc/letsencrypt/live/${PRIMARY_HOSTNAME}/privkey.pem" > "$TEMP_PEM"
-    chown icecast2:icecast "$TEMP_PEM"
-    chmod 600 "$TEMP_PEM"
-    mv "$TEMP_PEM" "${ICECAST_PEM_PATH}"
+    if ! cat "/etc/letsencrypt/live/${PRIMARY_HOSTNAME}/fullchain.pem" \
+        "/etc/letsencrypt/live/${PRIMARY_HOSTNAME}/privkey.pem" > "$TEMP_PEM" 2>/dev/null; then
+      echo -e "${RED}Failed to create PEM file - check certificate permissions${NC}"
+      rm -f "$TEMP_PEM"
+    else
+      chown icecast2:icecast "$TEMP_PEM"
+      chmod 600 "$TEMP_PEM"
+      mv "$TEMP_PEM" "${ICECAST_PEM_PATH}"
+    fi
 
     if [ -f "${ICECAST_PEM_PATH}" ]; then
-      # Update icecast.xml with SSL settings
-      sed -i "/<paths>/a \
+      # Validate the PEM file
+      if ! openssl x509 -in "${ICECAST_PEM_PATH}" -noout 2>/dev/null; then
+        echo -e "${RED}Generated PEM file is invalid${NC}"
+        rm -f "${ICECAST_PEM_PATH}"
+      else
+        # Update icecast.xml with SSL settings
+        sed -i "/<paths>/a \
     \    <ssl-certificate>${ICECAST_PEM_PATH}</ssl-certificate>" "$ICECAST_XML"
 
-      sed -i "/<\/listen-socket>/a \
+        sed -i "/<\/listen-socket>/a \
     <listen-socket>\n\
         <port>443</port>\n\
         <ssl>1</ssl>\n\
     </listen-socket>" "$ICECAST_XML"
 
-      # Validate the modified XML
-      echo -e "${BLUE}►► Validating SSL configuration...${NC}"
-      if ! xmllint --noout "$ICECAST_XML" 2>&1; then
-        echo -e "${RED}Error: icecast.xml became invalid after adding SSL configuration.${NC}"
-        exit 1
-      fi
+        # Validate the modified XML
+        echo -e "${BLUE}►► Validating SSL configuration...${NC}"
+        if ! xmllint --noout "$ICECAST_XML" 2>&1; then
+          echo -e "${RED}Error: icecast.xml became invalid after adding SSL configuration.${NC}"
+          exit 1
+        fi
 
-      # Restart Icecast to apply the new configuration
-      echo -e "${BLUE}►► Restarting Icecast with SSL support${NC}"
-      systemctl restart icecast2
+        # Restart Icecast to apply the new configuration
+        echo -e "${BLUE}►► Restarting Icecast with SSL support${NC}"
+        systemctl restart icecast2
+      fi
     else
       echo -e "${YELLOW} !! SSL certificate creation failed. Check permissions.${NC}"
     fi
