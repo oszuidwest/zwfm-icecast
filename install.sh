@@ -61,22 +61,24 @@ prompt_user "SSL" "n" "Enable Let's Encrypt SSL? (y/n)" "y/n"
 prompt_user "TIMEZONE" "Europe/Amsterdam" "Server timezone" "str"
 prompt_user "DO_UPDATES" "y" "Perform OS updates? (y/n)" "y/n"
 
+# Determine if SSL should be enabled (requires port 80 for Let's Encrypt HTTP-01)
+SSL_ENABLED=false
+if [ "$SSL" = "y" ] && [ "$PORT" = "80" ]; then
+  SSL_ENABLED=true
+elif [ "$SSL" = "y" ]; then
+  echo -e "${YELLOW}Note: SSL requires port 80 for Let's Encrypt. SSL will be skipped.${NC}"
+fi
+
 # Sanitize and validate the entered hostname(s)
-HOSTNAMES=$(echo "$HOSTNAMES" | xargs)
-IFS=' ' read -r -a HOSTNAMES_ARRAY <<< "$HOSTNAMES"
-sanitized_domains=()
-for domain in "${HOSTNAMES_ARRAY[@]}"; do
-  sanitized_domain=$(echo "$domain" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-  # Validate hostname using library function
-  if ! is_valid "$sanitized_domain" "host" "HOSTNAME"; then
-    echo -e "${RED}Error: Invalid hostname format: $domain${NC}"
+IFS=' ' read -r -a HOSTNAMES_ARRAY <<< "$(echo "$HOSTNAMES" | xargs)"
+for i in "${!HOSTNAMES_ARRAY[@]}"; do
+  domain=$(echo "${HOSTNAMES_ARRAY[i]}" | tr '[:upper:]' '[:lower:]')
+  if ! is_valid "$domain" "host" "HOSTNAME"; then
+    echo -e "${RED}Error: Invalid hostname format: ${HOSTNAMES_ARRAY[i]}${NC}"
     exit 1
   fi
-  sanitized_domains+=("$sanitized_domain")
+  HOSTNAMES_ARRAY[i]="$domain"
 done
-
-# Order the entered hostname(s)
-HOSTNAMES_ARRAY=("${sanitized_domains[@]}")
 PRIMARY_HOSTNAME="${HOSTNAMES_ARRAY[0]}"
 
 # Validate DNS resolution for hostnames
@@ -104,25 +106,24 @@ done
 set_timezone "${TIMEZONE}"
 
 # Update the OS if requested
-if [ "${DO_UPDATES}" == "y" ]; then
+if [ "$DO_UPDATES" = "y" ]; then
   apt_update --silent
 fi
 
 # Install necessary packages
-if [ "$SSL" = "y" ] && [ "$PORT" = "80" ]; then
-  apt_install --silent icecast2 certbot libxml2-utils
-else
-  apt_install --silent icecast2 libxml2-utils
+PACKAGES=(icecast2 libxml2-utils)
+if [ "$SSL_ENABLED" = true ]; then
+  PACKAGES+=(certbot)
 fi
+apt_install --silent "${PACKAGES[@]}"
 
 # Backup existing configuration if it exists
 if [ -f "$ICECAST_XML" ]; then
-  file_backup "$ICECAST_XML"
-  case $? in
-    0) echo -e "${GREEN}✓ Backed up existing Icecast configuration${NC}" ;;
-    1) echo -e "${RED}Failed to backup configuration${NC}"; exit 1 ;;
-    2) ;; # File didn't exist, which is fine
-  esac
+  if ! file_backup "$ICECAST_XML"; then
+    echo -e "${RED}Failed to backup configuration${NC}"
+    exit 1
+  fi
+  echo -e "${GREEN}✓ Backed up existing Icecast configuration${NC}"
 fi
 
 # Generate the initial icecast.xml configuration
@@ -209,10 +210,10 @@ if ! systemctl is-active --quiet icecast2; then
 fi
 
 # SSL configuration
-if [ "$SSL" = "y" ] && [ "$PORT" = "80" ]; then
+if [ "$SSL_ENABLED" = true ]; then
   echo -e "${BLUE}►► Running Certbot to obtain SSL certificate for domains: ${HOSTNAMES_ARRAY[*]} ${NC}"
 
-  # Create deploy hook script for better certificate handling
+  # Create deploy hook script for certificate renewal
   DEPLOY_HOOK_SCRIPT="${LETSENCRYPT_HOOKS_DIR}/icecast2.sh"
   mkdir -p "${LETSENCRYPT_HOOKS_DIR}"
   cat << HOOK_EOF > "$DEPLOY_HOOK_SCRIPT"
@@ -235,67 +236,50 @@ systemctl restart icecast2
 HOOK_EOF
   chmod +x "$DEPLOY_HOOK_SCRIPT"
 
+  # Obtain certificate
   if ! certbot --text --agree-tos --email "$ADMINMAIL" --noninteractive --no-eff-email \
     --webroot --webroot-path="${ICECAST_WEBROOT}" \
     "${DOMAINS_FLAGS[@]}" \
     certonly; then
     echo -e "${RED}Certbot failed to obtain certificate${NC}"
-    echo -e "${YELLOW}Common causes:${NC}"
-    echo -e "  - DNS not pointing to this server"
-    echo -e "  - Port 80 blocked by firewall"
-    echo -e "  - Rate limit exceeded"
+    echo -e "${YELLOW}Common causes: DNS not pointing to this server, port 80 blocked, rate limit exceeded${NC}"
     echo -e "${YELLOW}Icecast will continue running on port ${PORT} without SSL${NC}"
-  # Check if Certbot successfully obtained a certificate and create the PEM file
-  elif [ -d "/etc/letsencrypt/live/$PRIMARY_HOSTNAME" ]; then
-    # Create combined PEM file for Icecast (first time setup)
-    TEMP_PEM=$(mktemp)
-    if ! cat "/etc/letsencrypt/live/${PRIMARY_HOSTNAME}/fullchain.pem" \
-        "/etc/letsencrypt/live/${PRIMARY_HOSTNAME}/privkey.pem" > "$TEMP_PEM" 2>/dev/null; then
-      echo -e "${RED}Failed to create PEM file - check certificate permissions${NC}"
-      rm -f "$TEMP_PEM"
-    else
-      chown icecast2:icecast "$TEMP_PEM"
-      chmod 600 "$TEMP_PEM"
-      mv "$TEMP_PEM" "${ICECAST_PEM_PATH}"
-    fi
+    SSL_ENABLED=false
+  fi
+fi
 
-    if [ -f "${ICECAST_PEM_PATH}" ]; then
-      # Validate the PEM file
-      if ! openssl x509 -in "${ICECAST_PEM_PATH}" -noout 2>/dev/null; then
-        echo -e "${RED}Generated PEM file is invalid${NC}"
-        rm -f "${ICECAST_PEM_PATH}"
-      else
-        # Update icecast.xml with SSL settings
-        sed -i "/<paths>/a \
+# Create PEM file and configure SSL in Icecast
+if [ "$SSL_ENABLED" = true ] && [ -d "/etc/letsencrypt/live/$PRIMARY_HOSTNAME" ]; then
+  # Create combined PEM file using the deploy hook (reuse the same logic)
+  "$DEPLOY_HOOK_SCRIPT"
+
+  # Validate the PEM file
+  if [ ! -f "${ICECAST_PEM_PATH}" ] || ! openssl x509 -in "${ICECAST_PEM_PATH}" -noout 2>/dev/null; then
+    echo -e "${RED}Generated PEM file is invalid or missing${NC}"
+    rm -f "${ICECAST_PEM_PATH}"
+    SSL_ENABLED=false
+  fi
+fi
+
+# Update Icecast config with SSL settings
+if [ "$SSL_ENABLED" = true ] && [ -f "${ICECAST_PEM_PATH}" ]; then
+  sed -i "/<paths>/a \
     \    <ssl-certificate>${ICECAST_PEM_PATH}</ssl-certificate>" "$ICECAST_XML"
 
-        sed -i "/<\/listen-socket>/a \
+  sed -i "/<\/listen-socket>/a \
     <listen-socket>\n\
         <port>443</port>\n\
         <ssl>1</ssl>\n\
     </listen-socket>" "$ICECAST_XML"
 
-        # Validate the modified XML
-        echo -e "${BLUE}►► Validating SSL configuration...${NC}"
-        if ! xmllint --noout "$ICECAST_XML" 2>&1; then
-          echo -e "${RED}Error: icecast.xml became invalid after adding SSL configuration.${NC}"
-          exit 1
-        fi
+  echo -e "${BLUE}►► Validating SSL configuration...${NC}"
+  if ! xmllint --noout "$ICECAST_XML" 2>&1; then
+    echo -e "${RED}Error: icecast.xml became invalid after adding SSL configuration.${NC}"
+    exit 1
+  fi
 
-        # Restart Icecast to apply the new configuration
-        echo -e "${BLUE}►► Restarting Icecast with SSL support${NC}"
-        systemctl restart icecast2
-      fi
-    else
-      echo -e "${YELLOW} !! SSL certificate creation failed. Check permissions.${NC}"
-    fi
-  else
-    echo -e "${YELLOW} !! SSL certificate acquisition failed. Icecast will continue running on port ${PORT}.${NC}"
-  fi
-else
-  if [ "$SSL" = "y" ]; then
-    echo -e "${YELLOW} !! SSL setup is only possible when Icecast is running on port 80. You entered port ${PORT}. Skipping SSL configuration.${NC}"
-  fi
+  echo -e "${BLUE}►► Restarting Icecast with SSL support${NC}"
+  systemctl restart icecast2
 fi
 
 # Display installation summary
@@ -310,7 +294,7 @@ echo -e "  Admin username: ${CYAN}admin${NC}"
 echo -e "  Admin password: ${CYAN}$ADMINPASS${NC}"
 echo -e "  Source password: ${CYAN}$SOURCEPASS${NC}"
 
-if [ "$SSL" = "y" ] && [ "$PORT" = "80" ] && [ -f "${ICECAST_PEM_PATH}" ]; then
+if [ "$SSL_ENABLED" = true ] && [ -f "${ICECAST_PEM_PATH}" ]; then
   echo -e "\n  ${GREEN}✓ SSL enabled${NC}"
   echo -e "  HTTPS URL: ${CYAN}https://$PRIMARY_HOSTNAME/${NC}"
   echo -e "  Certificate renewal: Automatic via Certbot"
@@ -320,6 +304,6 @@ echo -e "\n${YELLOW}Important commands:${NC}"
 echo -e "  View logs: ${CYAN}journalctl -u icecast2 -f${NC}"
 echo -e "  Restart Icecast: ${CYAN}systemctl restart icecast2${NC}"
 echo -e "  Edit configuration: ${CYAN}nano $ICECAST_XML${NC}"
-if [ "$SSL" = "y" ] && [ "$PORT" = "80" ]; then
+if [ "$SSL_ENABLED" = true ]; then
   echo -e "  Test certificate renewal: ${CYAN}certbot renew --dry-run${NC}"
 fi

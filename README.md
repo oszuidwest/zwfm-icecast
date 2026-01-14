@@ -4,8 +4,7 @@
 
 Automated installer for [Icecast2](https://icecast.org/) with optional SSL/TLS via Let's Encrypt. Used by [ZuidWest FM](https://www.zuidwestfm.nl/), [Radio Rucphen](https://www.rucphenrtv.nl/), and [BredaNu](https://www.bredanu.nl/).
 
-Icecast serves as the public-facing streaming endpoint for our [Liquidsoap-based streaming solution](https://github.com/oszuidwest/zwfm-liquidsoap), providing MP3 and AAC streams to listeners. It also works with any other streaming encoder or broadcasting software that supports Icecast protocol, including FFmpeg, Butt (Broadcast Using This Tool), Rocket Broadcaster, and many others.
-Pairs perfectly with [zwfm-liquidsoap](https://github.com/oszuidwest/zwfm-liquidsoap) for a complete streaming solution. Works with any Icecast-compatible encoder (FFmpeg, Butt, Rocket Broadcaster, etc.).
+Pairs perfectly with [zwfm-liquidsoap](https://github.com/oszuidwest/zwfm-liquidsoap) for a complete streaming solution, providing MP3 and AAC streams to listeners. Works with any Icecast-compatible encoder (FFmpeg, Butt, Rocket Broadcaster, etc.).
 
 # Features
 - Fully automated installation and service setup
