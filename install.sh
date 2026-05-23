@@ -110,6 +110,10 @@ if [ "$DO_UPDATES" = "y" ]; then
   apt_update --silent
 fi
 
+if declare -F set_system_hardening_baseline > /dev/null; then
+  set_system_hardening_baseline --silent
+fi
+
 # Install necessary packages
 PACKAGES=(icecast2 libxml2-utils)
 if [ "$SSL_ENABLED" = true ]; then
