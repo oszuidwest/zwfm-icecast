@@ -102,9 +102,11 @@ for domain in "${HOSTNAMES_ARRAY[@]}"; do
   DOMAINS_FLAGS+=(-d "$domain")
 done
 
-# Configure host time settings and journald storage limits
+# Configure host time settings
 set_timezone "${TIMEZONE}"
 set_time_sync
+
+# Configure journald storage limits
 set_journald_limits
 
 # Update the OS if requested
