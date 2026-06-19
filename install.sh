@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 
-# Load the functions library
+BASH_FUNCTIONS_REF="main"
+FUNCTIONS_LIB_URL="https://raw.githubusercontent.com/oszuidwest/bash-functions/${BASH_FUNCTIONS_REF}/common-functions.sh"
 FUNCTIONS_LIB_PATH=$(mktemp)
-FUNCTIONS_LIB_URL="https://raw.githubusercontent.com/oszuidwest/bash-functions/main/common-functions.sh"
 
-# Clean up temporary file on exit
 trap 'rm -f "${FUNCTIONS_LIB_PATH}"' EXIT
 
-# Download the functions library
-if ! curl -sLo "${FUNCTIONS_LIB_PATH}" "${FUNCTIONS_LIB_URL}"; then
-  echo -e "*** Failed to download the functions library. Please check your network connection! ***"
+clear || true
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "*** curl is required to download the functions library. ***"
   exit 1
 fi
 
-# Source the functions library
+if ! curl -fsSL -o "${FUNCTIONS_LIB_PATH}" "${FUNCTIONS_LIB_URL}"; then
+  echo "*** Failed to download functions library. Please check your network connection. ***"
+  exit 1
+fi
+
 # shellcheck source=/dev/null
 source "${FUNCTIONS_LIB_PATH}"
 
@@ -29,9 +33,9 @@ set_colors
 assert_user_privileged "root"
 assert_os_linux
 assert_os_64bit
+assert_tool "curl"
 
 # Display a welcome banner
-clear
 cat << "EOF"
  ______     _     ___          __       _     ______ __  __ 
 |___  /    (_)   | \ \        / /      | |   |  ____|  \/  |
@@ -185,6 +189,9 @@ fi
 
 # Create robots.txt to prevent bots from accessing the server
 echo -e "${BLUE}►► Creating robots.txt to block bots...${NC}"
+if [ -f "${ICECAST_WEBROOT}/robots.txt" ] && ! file_backup "${ICECAST_WEBROOT}/robots.txt"; then
+  exit 1
+fi
 cat << 'ROBOTS_EOF' > "${ICECAST_WEBROOT}/robots.txt"
 # Robots.txt for Icecast streaming server
 # Prevents bots from consuming bandwidth and indexing
@@ -220,6 +227,9 @@ if [ "$SSL_ENABLED" = true ]; then
   # Create deploy hook script for certificate renewal
   DEPLOY_HOOK_SCRIPT="${LETSENCRYPT_HOOKS_DIR}/icecast2.sh"
   mkdir -p "${LETSENCRYPT_HOOKS_DIR}"
+  if [ -f "$DEPLOY_HOOK_SCRIPT" ] && ! file_backup "$DEPLOY_HOOK_SCRIPT"; then
+    exit 1
+  fi
   cat << HOOK_EOF > "$DEPLOY_HOOK_SCRIPT"
 #!/bin/bash
 set -euo pipefail
@@ -284,6 +294,11 @@ if [ "$SSL_ENABLED" = true ] && [ -f "${ICECAST_PEM_PATH}" ]; then
 
   echo -e "${BLUE}►► Restarting Icecast with SSL support${NC}"
   systemctl restart icecast2
+fi
+
+if ! systemctl is-active --quiet icecast2; then
+  echo -e "${RED}Error: Icecast is not running after configuration. Check logs with: journalctl -u icecast2${NC}"
+  exit 1
 fi
 
 # Display installation summary
