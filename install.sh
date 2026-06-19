@@ -104,6 +104,8 @@ done
 
 # Set the system timezone
 set_timezone "${TIMEZONE}"
+set_time_sync
+set_journald_limits
 
 # Update the OS if requested
 if [ "$DO_UPDATES" = "y" ]; then
